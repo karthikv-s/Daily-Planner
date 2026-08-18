@@ -34,12 +34,19 @@ export default function LoginPage() {
     formData.append('identifier', identifier)
     formData.append('password', password)
 
-    const res = await login(formData)
-    if (res?.error) {
-      toast.error(res.error)
+    try {
+      const res = await login(formData)
+      if (res?.error) {
+        toast.error(res.error)
+        setIsLoading(false)
+      } else {
+        toast.success('Signed in successfully!')
+        router.push('/')
+        router.refresh()
+      }
+    } catch (err) {
+      toast.error('Sign in failed. Please try again.')
       setIsLoading(false)
-    } else {
-      toast.success('Signed in successfully!')
     }
   }
 

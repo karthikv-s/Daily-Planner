@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
-import { normalizeIdentifier, detectIdentifierType } from '@/lib/otp'
+import { normalizeIdentifier, detectIdentifierType, emailMatches, phoneMatches } from '@/lib/otp-utils'
 import { createClient } from '@/lib/supabase/server'
 
 export interface UserAccount {
@@ -71,8 +71,11 @@ export async function createLocalUserAsync(identifier: string, phoneInput: strin
   }
 
   // 1. Save locally if filesystem permits
-  const existing = users.find((u) => (email && u.email === email) || (phone && u.phone === phone))
-  if (!existing) {
+  const existingIndex = users.findIndex((u) => (email && emailMatches(u.email, email)) || (phone && phoneMatches(u.phone, phone)))
+  if (existingIndex !== -1) {
+    users[existingIndex].passwordHash = hashPassword(password)
+    saveLocalUsers(users)
+  } else {
     users.push(newUser)
     saveLocalUsers(users)
   }
@@ -103,7 +106,7 @@ export function createLocalUser(identifier: string, phoneInput: string, password
   const phone = type === 'phone' ? normalized : (phoneInput ? normalizeIdentifier(phoneInput) : undefined)
 
   const existing = users.find(
-    (u) => (email && u.email === email) || (phone && u.phone === phone)
+    (u) => (email && emailMatches(u.email, email)) || (phone && phoneMatches(u.phone, phone))
   )
 
   if (existing) {
@@ -123,7 +126,6 @@ export function createLocalUser(identifier: string, phoneInput: string, password
 
   // Async sync to Supabase DB
   void (async () => {
-
     try {
       const supabase = await createClient()
       await supabase.from('local_users').upsert({
@@ -139,11 +141,11 @@ export function createLocalUser(identifier: string, phoneInput: string, password
   })()
 
   return newUser
-
 }
 
 export async function authenticateLocalUserAsync(identifier: string, password: string): Promise<UserAccount | null> {
   const normalized = normalizeIdentifier(identifier)
+  const isEmail = normalized.includes('@')
   const hash = hashPassword(password)
 
   // 1. Try local disk memory users
@@ -153,22 +155,20 @@ export async function authenticateLocalUserAsync(identifier: string, password: s
   // 2. Try Supabase DB local_users table (crucial for Vercel deployments)
   try {
     const supabase = await createClient()
-    let query = supabase.from('local_users').select('*').eq('password_hash', hash)
-    if (normalized.includes('@')) {
-      query = query.eq('email', normalized)
-    } else {
-      query = query.eq('phone', normalized)
-    }
-
-    const { data: dbRows } = await query
+    const { data: dbRows } = await supabase.from('local_users').select('*').eq('password_hash', hash)
     if (dbRows && dbRows.length > 0) {
-      const dbUser = dbRows[0]
-      return {
-        id: dbUser.id,
-        email: dbUser.email,
-        phone: dbUser.phone,
-        passwordHash: dbUser.password_hash,
-        createdAt: dbUser.created_at,
+      const dbUser = dbRows.find((r: any) =>
+        (isEmail && emailMatches(r.email, normalized)) ||
+        (!isEmail && phoneMatches(r.phone, normalized))
+      )
+      if (dbUser) {
+        return {
+          id: dbUser.id,
+          email: dbUser.email,
+          phone: dbUser.phone,
+          passwordHash: dbUser.password_hash,
+          createdAt: dbUser.created_at,
+        }
       }
     }
   } catch (err) {
@@ -181,12 +181,15 @@ export async function authenticateLocalUserAsync(identifier: string, password: s
 export function authenticateLocalUser(identifier: string, password: string): UserAccount | null {
   const users = getLocalUsers()
   const normalized = normalizeIdentifier(identifier)
+  const isEmail = normalized.includes('@')
   const hash = hashPassword(password)
 
   const user = users.find(
     (u) =>
-      ((u.email && u.email.toLowerCase() === normalized) ||
-        (u.phone && u.phone === normalized)) &&
+      ((isEmail && emailMatches(u.email, normalized)) ||
+        (!isEmail && phoneMatches(u.phone, normalized)) ||
+        (u.email && emailMatches(u.email, normalized)) ||
+        (u.phone && phoneMatches(u.phone, normalized))) &&
       u.passwordHash === hash
   )
 
@@ -201,10 +204,32 @@ export async function updateLocalUserPasswordAsync(identifier: string, newPasswo
 
   try {
     const supabase = await createClient()
-    if (normalized.includes('@')) {
-      await supabase.from('local_users').update({ password_hash: hash }).eq('email', normalized)
+    const isEmail = normalized.includes('@')
+    const { data: dbRows } = await supabase.from('local_users').select('*')
+    if (dbRows && dbRows.length > 0) {
+      const match = dbRows.find((r: any) =>
+        (isEmail && emailMatches(r.email, normalized)) ||
+        (!isEmail && phoneMatches(r.phone, normalized))
+      )
+      if (match) {
+        await supabase.from('local_users').update({ password_hash: hash }).eq('id', match.id)
+      } else {
+        await supabase.from('local_users').upsert({
+          id: crypto.randomUUID(),
+          email: isEmail ? normalized : null,
+          phone: !isEmail ? normalized : null,
+          password_hash: hash,
+          created_at: new Date().toISOString(),
+        })
+      }
     } else {
-      await supabase.from('local_users').update({ password_hash: hash }).eq('phone', normalized)
+      await supabase.from('local_users').upsert({
+        id: crypto.randomUUID(),
+        email: isEmail ? normalized : null,
+        phone: !isEmail ? normalized : null,
+        password_hash: hash,
+        created_at: new Date().toISOString(),
+      })
     }
     updated = true
   } catch (err) {
@@ -217,19 +242,31 @@ export async function updateLocalUserPasswordAsync(identifier: string, newPasswo
 export function updateLocalUserPassword(identifier: string, newPassword: string): boolean {
   const users = getLocalUsers()
   const normalized = normalizeIdentifier(identifier)
+  const isEmail = normalized.includes('@')
 
   const userIndex = users.findIndex(
     (u) =>
-      (u.email && u.email.toLowerCase() === normalized) ||
-      (u.phone && u.phone === normalized)
+      (isEmail && emailMatches(u.email, normalized)) ||
+      (!isEmail && phoneMatches(u.phone, normalized)) ||
+      (u.email && emailMatches(u.email, normalized)) ||
+      (u.phone && phoneMatches(u.phone, normalized))
   )
 
   if (userIndex === -1) {
-    return false
+    const newUser: UserAccount = {
+      id: crypto.randomUUID(),
+      email: isEmail ? normalized : undefined,
+      phone: !isEmail ? normalized : undefined,
+      passwordHash: hashPassword(newPassword),
+      createdAt: new Date().toISOString(),
+    }
+    users.push(newUser)
+  } else {
+    users[userIndex].passwordHash = hashPassword(newPassword)
   }
 
-  users[userIndex].passwordHash = hashPassword(newPassword)
   saveLocalUsers(users)
   return true
 }
+
 

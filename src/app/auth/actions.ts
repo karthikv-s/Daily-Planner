@@ -73,12 +73,15 @@ export async function login(formData: FormData) {
     console.warn('[Auth Server] Supabase connection unavailable, using local database store fallback:', err)
   }
 
-  // Fallback to local database authentication if Supabase auth fails or email is unconfirmed
   if (!authSuccess) {
     const localUser = await authenticateLocalUserAsync(identifier, password)
     if (localUser) {
       authSuccess = true
     }
+  }
+
+  if (errorMessage && (errorMessage.toLowerCase().includes('fetch') || errorMessage.toLowerCase().includes('network'))) {
+    errorMessage = null
   }
 
   if (!authSuccess) {
@@ -94,7 +97,7 @@ export async function login(formData: FormData) {
   })
 
   revalidatePath('/', 'layout')
-  redirect('/')
+  return { success: true }
 }
 
 /**

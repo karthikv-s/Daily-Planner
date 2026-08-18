@@ -47,30 +47,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     syncUserStore();
 
-    const supabase = createClient();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user?.id) {
-        await rehydrateTaskStore(session.user.id);
-      } else {
-        const user = await getCurrentUser();
-        await rehydrateTaskStore(user?.id || user?.identifier || null);
-      }
-      const cloudRes = await fetchUserTasksAction();
-      if (cloudRes.success && cloudRes.data) {
-        useTaskStore.getState().loadServerState({
-          tasks: cloudRes.data.tasks || [],
-          xp: cloudRes.data.xp || 0,
-          streak: cloudRes.data.streak || 0,
-          bestStreak: cloudRes.data.bestStreak || 0,
-          lastCompletedDate: cloudRes.data.lastCompletedDate || null,
-          badges: cloudRes.data.badges || [],
-        });
-      }
-    });
+    let subscription: { unsubscribe: () => void } | null = null;
+    try {
+      const supabase = createClient();
+      const authRes = supabase.auth.onAuthStateChange(async (event, session) => {
+        try {
+          if (session?.user?.id) {
+            await rehydrateTaskStore(session.user.id);
+          } else {
+            const user = await getCurrentUser();
+            await rehydrateTaskStore(user?.id || user?.identifier || null);
+          }
+          const cloudRes = await fetchUserTasksAction();
+          if (cloudRes.success && cloudRes.data) {
+            useTaskStore.getState().loadServerState({
+              tasks: cloudRes.data.tasks || [],
+              xp: cloudRes.data.xp || 0,
+              streak: cloudRes.data.streak || 0,
+              bestStreak: cloudRes.data.bestStreak || 0,
+              lastCompletedDate: cloudRes.data.lastCompletedDate || null,
+              badges: cloudRes.data.badges || [],
+            });
+          }
+        } catch (err) {
+          // Ignore network/fetch errors gracefully
+        }
+      });
+      subscription = authRes.data.subscription;
+    } catch (err) {
+      // Supabase client initialization or network error
+    }
 
     return () => {
       active = false;
-      subscription.unsubscribe();
+      subscription?.unsubscribe();
     };
   }, [pathname]);
 
