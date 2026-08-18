@@ -26,7 +26,7 @@ export default function ForgotPasswordPage() {
 
   const [isLoading, setIsLoading] = useState(false)
   const [resendTimer, setResendTimer] = useState(60)
-  const [canResend, setCanResend] = useState(false)
+  const canResend = resendTimer === 0
 
   // Resend countdown timer logic
   useEffect(() => {
@@ -35,8 +35,6 @@ export default function ForgotPasswordPage() {
       interval = setInterval(() => {
         setResendTimer((prev) => prev - 1)
       }, 1000)
-    } else if (resendTimer === 0) {
-      setCanResend(true)
     }
     return () => clearInterval(interval)
   }, [step, resendTimer])
@@ -62,7 +60,6 @@ export default function ForgotPasswordPage() {
       toast.success(res.message)
       setStep(2)
       setResendTimer(60)
-      setCanResend(false)
     }
   }
 

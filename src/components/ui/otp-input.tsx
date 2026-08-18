@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useRef, useState, useEffect } from 'react'
+import React, { useRef } from 'react'
 import { cn } from '@/lib/utils'
 
 interface OtpInputProps {
@@ -18,17 +18,8 @@ export function OtpInput({
   disabled = false,
   className,
 }: OtpInputProps) {
-  const [digits, setDigits] = useState<string[]>(() => {
-    const initial = value.split('')
-    return Array.from({ length }, (_, i) => initial[i] || '')
-  })
-
+  const digits = Array.from({ length }, (_, i) => value[i] || '')
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
-
-  useEffect(() => {
-    const newDigits = Array.from({ length }, (_, i) => value[i] || '')
-    setDigits(newDigits)
-  }, [value, length])
 
   const handleChange = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value
