@@ -33,7 +33,6 @@ export function OtpInput({
 
     const updated = [...digits]
     updated[index] = digit
-    setDigits(updated)
 
     const fullCode = updated.join('')
     onChange(fullCode)
@@ -68,7 +67,6 @@ export function OtpInput({
 
     const pastedDigits = pastedData.slice(0, length).split('')
     const updated = Array.from({ length }, (_, i) => pastedDigits[i] || '')
-    setDigits(updated)
     onChange(updated.join(''))
 
     // Focus last filled digit or final input
