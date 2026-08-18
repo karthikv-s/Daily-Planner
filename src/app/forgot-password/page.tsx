@@ -58,10 +58,13 @@ export default function ForgotPasswordPage() {
       toast.error(res.message)
     } else {
       toast.success(res.message)
+      setOtpCode('')
       setStep(2)
       setResendTimer(60)
     }
   }
+
+
 
   // Step 2: Verify OTP
   async function handleVerifyOtp(e: React.FormEvent) {

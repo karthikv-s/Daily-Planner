@@ -17,23 +17,25 @@ interface TaskState {
   toggleComplete: (id: string) => void;
   isCloudSyncEnabled: boolean;
   setCloudSync: (enabled: boolean) => void;
+  loadServerState: (data: Partial<TaskState>) => void;
 }
 
 export const useTaskStore = create<TaskState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       tasks: [],
       xp: 0,
       streak: 0,
       bestStreak: 0,
       lastCompletedDate: null,
       badges: [],
-      isCloudSyncEnabled: false,
+      isCloudSyncEnabled: true,
       setCloudSync: (enabled) => set({ isCloudSyncEnabled: enabled }),
+      loadServerState: (data) => set((state) => ({ ...state, ...data })),
       addTask: (task) => {
         set((state) => {
           const newTasks = [
-             { ...task, id: crypto.randomUUID(), createdAt: new Date().toISOString(), completed: false },
+            { ...task, id: crypto.randomUUID(), createdAt: new Date().toISOString(), completed: false },
             ...state.tasks,
           ];
           if (newTasks.length === 1 && !state.badges.includes('First Task')) {
@@ -124,6 +126,7 @@ export const useTaskStore = create<TaskState>()(
     }
   )
 );
+
 
 export const rehydrateTaskStore = async (userId: string | null) => {
   if (typeof window === 'undefined') return;

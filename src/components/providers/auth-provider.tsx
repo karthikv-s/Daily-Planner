@@ -6,6 +6,9 @@ import { createClient } from '@/lib/supabase/client';
 import { rehydrateTaskStore } from '@/store/useTaskStore';
 import { getCurrentUser } from '@/app/auth/actions';
 
+import { fetchUserTasksAction } from '@/app/tasks/actions';
+import { useTaskStore } from '@/store/useTaskStore';
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isReady, setIsReady] = useState(false);
   const pathname = usePathname();
@@ -19,6 +22,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const userId = user?.id || user?.identifier || null;
         if (active) {
           await rehydrateTaskStore(userId);
+          if (userId) {
+            const cloudRes = await fetchUserTasksAction();
+            if (cloudRes.success && cloudRes.data) {
+              useTaskStore.getState().loadServerState({
+                tasks: cloudRes.data.tasks || [],
+                xp: cloudRes.data.xp || 0,
+                streak: cloudRes.data.streak || 0,
+                bestStreak: cloudRes.data.bestStreak || 0,
+                lastCompletedDate: cloudRes.data.lastCompletedDate || null,
+                badges: cloudRes.data.badges || [],
+              });
+            }
+          }
           setIsReady(true);
         }
       } catch (err) {
@@ -34,10 +50,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const supabase = createClient();
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user?.id) {
-        rehydrateTaskStore(session.user.id);
+        await rehydrateTaskStore(session.user.id);
       } else {
         const user = await getCurrentUser();
-        rehydrateTaskStore(user?.id || user?.identifier || null);
+        await rehydrateTaskStore(user?.id || user?.identifier || null);
+      }
+      const cloudRes = await fetchUserTasksAction();
+      if (cloudRes.success && cloudRes.data) {
+        useTaskStore.getState().loadServerState({
+          tasks: cloudRes.data.tasks || [],
+          xp: cloudRes.data.xp || 0,
+          streak: cloudRes.data.streak || 0,
+          bestStreak: cloudRes.data.bestStreak || 0,
+          lastCompletedDate: cloudRes.data.lastCompletedDate || null,
+          badges: cloudRes.data.badges || [],
+        });
       }
     });
 
@@ -46,6 +73,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       subscription.unsubscribe();
     };
   }, [pathname]);
+
 
   if (!isReady) {
     return (

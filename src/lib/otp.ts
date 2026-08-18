@@ -1,3 +1,5 @@
+import fs from 'fs'
+import path from 'path'
 import { resend } from '@/lib/resend'
 import { sendGmailOtp } from '@/lib/mailer'
 import {
@@ -17,8 +19,40 @@ export interface OtpRecord {
   verified: boolean
 }
 
-// In-memory store for active OTP verification codes
-const otpMemoryStore = new Map<string, OtpRecord>()
+const DATA_DIR = path.join(process.cwd(), '.data')
+const OTP_FILE = path.join(DATA_DIR, 'otp_codes.json')
+
+function ensureOtpStoreDir() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true })
+    }
+    if (!fs.existsSync(OTP_FILE)) {
+      fs.writeFileSync(OTP_FILE, JSON.stringify({}), 'utf-8')
+    }
+  } catch (err) {
+    console.error('Error creating OTP storage directory:', err)
+  }
+}
+
+function getStoredOtps(): Record<string, OtpRecord> {
+  ensureOtpStoreDir()
+  try {
+    const content = fs.readFileSync(OTP_FILE, 'utf-8')
+    return JSON.parse(content) || {}
+  } catch (err) {
+    return {}
+  }
+}
+
+function saveStoredOtps(records: Record<string, OtpRecord>) {
+  ensureOtpStoreDir()
+  try {
+    fs.writeFileSync(OTP_FILE, JSON.stringify(records, null, 2), 'utf-8')
+  } catch (err) {
+    console.error('Error writing OTP records:', err)
+  }
+}
 
 /**
  * Generates a random 6-digit OTP code.
@@ -41,16 +75,20 @@ export async function sendOtp(identifier: string): Promise<{
   const code = generateOtpCode()
   const expiresAt = Date.now() + 10 * 60 * 1000 // 10 minutes lifetime
 
-  // Save to memory store
-  otpMemoryStore.set(normalized, {
+  const record: OtpRecord = {
     identifier: normalized,
     type,
     code,
     expiresAt,
     verified: false,
-  })
+  }
 
-  console.log(`[OTP Engine] Generated OTP for ${type}: ${normalized}`)
+  // Save to persistent server storage
+  const records = getStoredOtps()
+  records[normalized] = record
+  saveStoredOtps(records)
+
+  console.log(`[OTP Engine] Generated persistent OTP for ${type}: ${normalized} -> Code: ${code}`)
 
   if (type === 'email') {
     const emailHtml = `
@@ -88,7 +126,7 @@ export async function sendOtp(identifier: string): Promise<{
         console.error('[OTP Engine] Resend error:', resendError.message)
         return {
           success: false,
-          message: `Unable to send email: ${resendError.message || 'Error'}. Please configure Gmail SMTP in .env.local.`,
+          message: `Unable to send email: ${resendError.message || 'Gateway Error'}. Please configure Gmail SMTP in .env.local.`,
           type,
         }
       }
@@ -110,11 +148,12 @@ export async function sendOtp(identifier: string): Promise<{
     // Phone SMS delivery
     return {
       success: true,
-      message: `OTP sent via SMS to ${normalized}.`,
+      message: `Verification code sent via SMS to ${normalized}.`,
       type,
     }
   }
 }
+
 
 /**
  * Verifies if the provided OTP code is valid and not expired for the given identifier.
@@ -124,7 +163,8 @@ export async function verifyOtp(
   code: string
 ): Promise<{ success: boolean; message: string }> {
   const normalized = normalizeIdentifier(identifier)
-  const record = otpMemoryStore.get(normalized)
+  const records = getStoredOtps()
+  const record = records[normalized]
 
   if (!record) {
     return {
@@ -134,7 +174,8 @@ export async function verifyOtp(
   }
 
   if (Date.now() > record.expiresAt) {
-    otpMemoryStore.delete(normalized)
+    delete records[normalized]
+    saveStoredOtps(records)
     return {
       success: false,
       message: 'OTP has expired. Please request a new code.',
@@ -150,7 +191,8 @@ export async function verifyOtp(
 
   // Mark as verified
   record.verified = true
-  otpMemoryStore.set(normalized, record)
+  records[normalized] = record
+  saveStoredOtps(records)
 
   return {
     success: true,
@@ -163,7 +205,8 @@ export async function verifyOtp(
  */
 export function isOtpVerified(identifier: string): boolean {
   const normalized = normalizeIdentifier(identifier)
-  const record = otpMemoryStore.get(normalized)
+  const records = getStoredOtps()
+  const record = records[normalized]
   return !!(record && record.verified && Date.now() <= record.expiresAt)
 }
 
@@ -172,5 +215,10 @@ export function isOtpVerified(identifier: string): boolean {
  */
 export function clearOtp(identifier: string): void {
   const normalized = normalizeIdentifier(identifier)
-  otpMemoryStore.delete(normalized)
+  const records = getStoredOtps()
+  if (records[normalized]) {
+    delete records[normalized]
+    saveStoredOtps(records)
+  }
 }
+

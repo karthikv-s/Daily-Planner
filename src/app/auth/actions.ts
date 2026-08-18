@@ -209,7 +209,6 @@ export async function requestOtpAction(rawIdentifier: string): Promise<{
   success: boolean
   message: string
   type?: IdentifierType
-  codeForDev?: string
 }> {
   if (!rawIdentifier) {
     return { success: false, message: 'Please enter a valid email address or phone number.' }
@@ -222,9 +221,9 @@ export async function requestOtpAction(rawIdentifier: string): Promise<{
     success: result.success,
     message: result.message,
     type: result.type,
-    codeForDev: result.codeForDev,
   }
 }
+
 
 /**
  * Verifies a 6-digit OTP code sent to email or phone number.

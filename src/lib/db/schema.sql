@@ -21,3 +21,16 @@ CREATE TABLE IF NOT EXISTS public.otp_codes (
 
 -- Index for fast lookup on active OTPs
 CREATE INDEX IF NOT EXISTS idx_otp_identifier ON public.otp_codes(identifier);
+
+-- Table for User Tasks Cloud Sync
+CREATE TABLE IF NOT EXISTS public.user_tasks (
+  user_id TEXT PRIMARY KEY,
+  tasks JSONB DEFAULT '[]'::jsonb,
+  xp INT DEFAULT 0,
+  streak INT DEFAULT 0,
+  best_streak INT DEFAULT 0,
+  last_completed_date TEXT,
+  badges JSONB DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
