@@ -101,21 +101,21 @@ export async function saveUserTasksServer(
     updatedAt: new Date().toISOString(),
   }
 
-  let savedLocal = false
+  let savedSuccess = false
 
-  // 1. Save to server disk file
+  // 1. Save to server disk file if filesystem permits
   try {
     const filePath = getUserFilePath(userId)
     fs.writeFileSync(filePath, JSON.stringify(dataToSave, null, 2), 'utf-8')
-    savedLocal = true
+    savedSuccess = true
   } catch (err) {
-    console.error(`[Task Store] Disk save failed for user ${userId}:`, err)
+    // Read-only filesystem on Vercel lambda instance
   }
 
-  // 2. Sync to Supabase DB table user_tasks
+  // 2. Sync to Supabase DB table user_tasks (Primary on Vercel)
   try {
     const supabase = await createClient()
-    await supabase.from('user_tasks').upsert({
+    const { error } = await supabase.from('user_tasks').upsert({
       user_id: userId,
       tasks: dataToSave.tasks,
       xp: dataToSave.xp,
@@ -125,9 +125,14 @@ export async function saveUserTasksServer(
       badges: dataToSave.badges,
       updated_at: dataToSave.updatedAt,
     })
+
+    if (!error) {
+      savedSuccess = true
+    }
   } catch (err) {
     // Supabase optional fallback
   }
 
-  return savedLocal
+  return savedSuccess
 }
+

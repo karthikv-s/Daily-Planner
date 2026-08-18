@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { normalizeIdentifier, detectIdentifierType } from '@/lib/otp'
+import { createClient } from '@/lib/supabase/server'
 
 export interface UserAccount {
   id: string
@@ -23,7 +24,7 @@ function ensureStorageDir() {
       fs.writeFileSync(USERS_FILE, JSON.stringify([]), 'utf-8')
     }
   } catch (err) {
-    console.error('Error creating local auth storage directory:', err)
+    // Read-only filesystem on serverless environments like Vercel
   }
 }
 
@@ -34,11 +35,14 @@ function hashPassword(password: string): string {
 export function getLocalUsers(): UserAccount[] {
   ensureStorageDir()
   try {
-    const content = fs.readFileSync(USERS_FILE, 'utf-8')
-    return JSON.parse(content) || []
+    if (fs.existsSync(USERS_FILE)) {
+      const content = fs.readFileSync(USERS_FILE, 'utf-8')
+      return JSON.parse(content) || []
+    }
   } catch (err) {
-    return []
+    // Ignore read errors
   }
+  return []
 }
 
 export function saveLocalUsers(users: UserAccount[]) {
@@ -46,8 +50,48 @@ export function saveLocalUsers(users: UserAccount[]) {
   try {
     fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf-8')
   } catch (err) {
-    console.error('Error writing local users:', err)
+    // Read-only filesystem on Vercel lambda instance
   }
+}
+
+export async function createLocalUserAsync(identifier: string, phoneInput: string, password: string): Promise<UserAccount> {
+  const users = getLocalUsers()
+  const normalized = normalizeIdentifier(identifier)
+  const type = detectIdentifierType(normalized)
+
+  const email = type === 'email' ? normalized : undefined
+  const phone = type === 'phone' ? normalized : (phoneInput ? normalizeIdentifier(phoneInput) : undefined)
+
+  const newUser: UserAccount = {
+    id: crypto.randomUUID(),
+    email,
+    phone,
+    passwordHash: hashPassword(password),
+    createdAt: new Date().toISOString(),
+  }
+
+  // 1. Save locally if filesystem permits
+  const existing = users.find((u) => (email && u.email === email) || (phone && u.phone === phone))
+  if (!existing) {
+    users.push(newUser)
+    saveLocalUsers(users)
+  }
+
+  // 2. Save to Supabase DB local_users table for Vercel persistence
+  try {
+    const supabase = await createClient()
+    await supabase.from('local_users').upsert({
+      id: newUser.id,
+      email: newUser.email,
+      phone: newUser.phone,
+      password_hash: newUser.passwordHash,
+      created_at: newUser.createdAt,
+    })
+  } catch (err) {
+    // Supabase DB connection error
+  }
+
+  return newUser
 }
 
 export function createLocalUser(identifier: string, phoneInput: string, password: string): UserAccount {
@@ -58,7 +102,6 @@ export function createLocalUser(identifier: string, phoneInput: string, password
   const email = type === 'email' ? normalized : undefined
   const phone = type === 'phone' ? normalized : (phoneInput ? normalizeIdentifier(phoneInput) : undefined)
 
-  // Check if existing
   const existing = users.find(
     (u) => (email && u.email === email) || (phone && u.phone === phone)
   )
@@ -76,8 +119,63 @@ export function createLocalUser(identifier: string, phoneInput: string, password
   }
 
   users.push(newUser)
-  saveLocalUsers(users)
+  saveLocalUsers(users);
+
+  // Async sync to Supabase DB
+  void (async () => {
+
+    try {
+      const supabase = await createClient()
+      await supabase.from('local_users').upsert({
+        id: newUser.id,
+        email: newUser.email,
+        phone: newUser.phone,
+        password_hash: newUser.passwordHash,
+        created_at: newUser.createdAt,
+      })
+    } catch {
+      // Ignore
+    }
+  })()
+
   return newUser
+
+}
+
+export async function authenticateLocalUserAsync(identifier: string, password: string): Promise<UserAccount | null> {
+  const normalized = normalizeIdentifier(identifier)
+  const hash = hashPassword(password)
+
+  // 1. Try local disk memory users
+  const localUser = authenticateLocalUser(identifier, password)
+  if (localUser) return localUser
+
+  // 2. Try Supabase DB local_users table (crucial for Vercel deployments)
+  try {
+    const supabase = await createClient()
+    let query = supabase.from('local_users').select('*').eq('password_hash', hash)
+    if (normalized.includes('@')) {
+      query = query.eq('email', normalized)
+    } else {
+      query = query.eq('phone', normalized)
+    }
+
+    const { data: dbRows } = await query
+    if (dbRows && dbRows.length > 0) {
+      const dbUser = dbRows[0]
+      return {
+        id: dbUser.id,
+        email: dbUser.email,
+        phone: dbUser.phone,
+        passwordHash: dbUser.password_hash,
+        createdAt: dbUser.created_at,
+      }
+    }
+  } catch (err) {
+    // Supabase DB connection skipped
+  }
+
+  return null
 }
 
 export function authenticateLocalUser(identifier: string, password: string): UserAccount | null {
@@ -93,6 +191,27 @@ export function authenticateLocalUser(identifier: string, password: string): Use
   )
 
   return user || null
+}
+
+export async function updateLocalUserPasswordAsync(identifier: string, newPassword: string): Promise<boolean> {
+  const normalized = normalizeIdentifier(identifier)
+  const hash = hashPassword(newPassword)
+
+  let updated = updateLocalUserPassword(identifier, newPassword)
+
+  try {
+    const supabase = await createClient()
+    if (normalized.includes('@')) {
+      await supabase.from('local_users').update({ password_hash: hash }).eq('email', normalized)
+    } else {
+      await supabase.from('local_users').update({ password_hash: hash }).eq('phone', normalized)
+    }
+    updated = true
+  } catch (err) {
+    // Ignore error
+  }
+
+  return updated
 }
 
 export function updateLocalUserPassword(identifier: string, newPassword: string): boolean {
@@ -113,3 +232,4 @@ export function updateLocalUserPassword(identifier: string, newPassword: string)
   saveLocalUsers(users)
   return true
 }
+

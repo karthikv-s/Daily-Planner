@@ -14,9 +14,9 @@ import {
   IdentifierType,
 } from '@/lib/otp'
 import {
-  createLocalUser,
-  authenticateLocalUser,
-  updateLocalUserPassword,
+  createLocalUserAsync,
+  authenticateLocalUserAsync,
+  updateLocalUserPasswordAsync,
 } from '@/lib/auth-store'
 
 /**
@@ -73,9 +73,9 @@ export async function login(formData: FormData) {
     console.warn('[Auth Server] Supabase connection unavailable, using local database store fallback:', err)
   }
 
-  // Fallback to local database authentication if Supabase fails or is unreachable
+  // Fallback to local database authentication if Supabase auth fails or email is unconfirmed
   if (!authSuccess) {
-    const localUser = authenticateLocalUser(identifier, password)
+    const localUser = await authenticateLocalUserAsync(identifier, password)
     if (localUser) {
       authSuccess = true
     }
@@ -160,7 +160,7 @@ export async function signup(formData: FormData) {
 
   // Always create/sync local user record so offline & standalone auth works seamlessly
   try {
-    createLocalUser(identifier, phone, password)
+    await createLocalUserAsync(identifier, phone, password)
     authSuccess = true
   } catch (err: unknown) {
     if (err instanceof Error && !authSuccess) {
@@ -224,7 +224,6 @@ export async function requestOtpAction(rawIdentifier: string): Promise<{
   }
 }
 
-
 /**
  * Verifies a 6-digit OTP code sent to email or phone number.
  */
@@ -264,8 +263,9 @@ export async function resetPasswordWithOtpAction(
     return verification
   }
 
-  // Update password in local storage
-  updateLocalUserPassword(identifier, newPassword)
+  // Update password in local database store
+  await updateLocalUserPasswordAsync(identifier, newPassword)
+
 
   // Try updating password in Supabase if session active
   try {

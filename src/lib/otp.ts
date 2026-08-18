@@ -61,6 +61,8 @@ export function generateOtpCode(): string {
   return Math.floor(100000 + Math.random() * 900000).toString()
 }
 
+import { createClient } from '@/lib/supabase/server'
+
 /**
  * Generates, stores, and sends an OTP to an email or phone number via real SMTP email services.
  */
@@ -83,10 +85,28 @@ export async function sendOtp(identifier: string): Promise<{
     verified: false,
   }
 
-  // Save to persistent server storage
-  const records = getStoredOtps()
-  records[normalized] = record
-  saveStoredOtps(records)
+  // 1. Save to disk persistent storage (if filesystem permits)
+  try {
+    const records = getStoredOtps()
+    records[normalized] = record
+    saveStoredOtps(records)
+  } catch (err) {
+    // Read-only serverless filesystem
+  }
+
+  // 2. Save to Supabase DB for Vercel persistence across serverless invocations
+  try {
+    const supabase = await createClient()
+    await supabase.from('otp_codes').upsert({
+      identifier: normalized,
+      type,
+      code,
+      expires_at: new Date(expiresAt).toISOString(),
+      verified: false,
+    })
+  } catch (err) {
+    console.warn('[OTP Engine] Supabase DB OTP save skipped:', err)
+  }
 
   console.log(`[OTP Engine] Generated persistent OTP for ${type}: ${normalized} -> Code: ${code}`)
 
@@ -126,7 +146,7 @@ export async function sendOtp(identifier: string): Promise<{
         console.error('[OTP Engine] Resend error:', resendError.message)
         return {
           success: false,
-          message: `Unable to send email: ${resendError.message || 'Gateway Error'}. Please configure Gmail SMTP in .env.local.`,
+          message: `Unable to send email: ${resendError.message || 'Gateway Error'}. Please configure GMAIL_USER and GMAIL_APP_PASSWORD in Vercel Environment Variables.`,
           type,
         }
       }
@@ -140,7 +160,7 @@ export async function sendOtp(identifier: string): Promise<{
       console.error('[OTP Engine] Email dispatch error:', err)
       return {
         success: false,
-        message: 'Failed to deliver OTP email. Please ensure your email credentials are configured in .env.local.',
+        message: 'Failed to deliver OTP email. Please ensure your Gmail SMTP or Resend credentials are added in Vercel Environment Variables.',
         type,
       }
     }
@@ -154,7 +174,6 @@ export async function sendOtp(identifier: string): Promise<{
   }
 }
 
-
 /**
  * Verifies if the provided OTP code is valid and not expired for the given identifier.
  */
@@ -163,8 +182,42 @@ export async function verifyOtp(
   code: string
 ): Promise<{ success: boolean; message: string }> {
   const normalized = normalizeIdentifier(identifier)
-  const records = getStoredOtps()
-  const record = records[normalized]
+
+  // 1. Try checking local storage/memory
+  let record: OtpRecord | null = null
+  try {
+    const records = getStoredOtps()
+    if (records[normalized]) {
+      record = records[normalized]
+    }
+  } catch (err) {
+    // Read-only filesystem
+  }
+
+  // 2. Try checking Supabase DB (Vercel serverless primary)
+  try {
+    const supabase = await createClient()
+    const { data: dbRow } = await supabase
+      .from('otp_codes')
+      .select('*')
+      .eq('identifier', normalized)
+      .single()
+
+    if (dbRow) {
+      const dbRecord: OtpRecord = {
+        identifier: dbRow.identifier,
+        type: dbRow.type as IdentifierType,
+        code: dbRow.code,
+        expiresAt: new Date(dbRow.expires_at).getTime(),
+        verified: dbRow.verified || false,
+      }
+      if (!record || dbRecord.expiresAt > record.expiresAt) {
+        record = dbRecord
+      }
+    }
+  } catch (err) {
+    // Supabase DB offline
+  }
 
   if (!record) {
     return {
@@ -174,8 +227,6 @@ export async function verifyOtp(
   }
 
   if (Date.now() > record.expiresAt) {
-    delete records[normalized]
-    saveStoredOtps(records)
     return {
       success: false,
       message: 'OTP has expired. Please request a new code.',
@@ -189,10 +240,24 @@ export async function verifyOtp(
     }
   }
 
-  // Mark as verified
-  record.verified = true
-  records[normalized] = record
-  saveStoredOtps(records)
+  // Mark as verified in Supabase DB
+  try {
+    const supabase = await createClient()
+    await supabase.from('otp_codes').update({ verified: true }).eq('identifier', normalized)
+  } catch (err) {
+    // Ignore error
+  }
+
+  // Mark as verified in disk storage
+  try {
+    const records = getStoredOtps()
+    if (records[normalized]) {
+      records[normalized].verified = true
+      saveStoredOtps(records)
+    }
+  } catch (err) {
+    // Ignore error
+  }
 
   return {
     success: true,
@@ -205,9 +270,13 @@ export async function verifyOtp(
  */
 export function isOtpVerified(identifier: string): boolean {
   const normalized = normalizeIdentifier(identifier)
-  const records = getStoredOtps()
-  const record = records[normalized]
-  return !!(record && record.verified && Date.now() <= record.expiresAt)
+  try {
+    const records = getStoredOtps()
+    const record = records[normalized]
+    return !!(record && record.verified && Date.now() <= record.expiresAt)
+  } catch (err) {
+    return false
+  }
 }
 
 /**
@@ -215,10 +284,26 @@ export function isOtpVerified(identifier: string): boolean {
  */
 export function clearOtp(identifier: string): void {
   const normalized = normalizeIdentifier(identifier)
-  const records = getStoredOtps()
-  if (records[normalized]) {
-    delete records[normalized]
-    saveStoredOtps(records)
+  try {
+    const records = getStoredOtps()
+    if (records[normalized]) {
+      delete records[normalized]
+      saveStoredOtps(records)
+    }
+  } catch (err) {
+    // Ignore
   }
+
+  void (async () => {
+
+    try {
+      const supabase = await createClient()
+      await supabase.from('otp_codes').delete().eq('identifier', normalized)
+    } catch {
+      // Ignore
+    }
+  })()
 }
+
+
 

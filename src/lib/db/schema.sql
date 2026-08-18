@@ -34,3 +34,13 @@ CREATE TABLE IF NOT EXISTS public.user_tasks (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Table for Standalone/Fallback Local Users on Vercel/Cloud
+CREATE TABLE IF NOT EXISTS public.local_users (
+  id TEXT PRIMARY KEY,
+  email TEXT UNIQUE,
+  phone TEXT UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+
