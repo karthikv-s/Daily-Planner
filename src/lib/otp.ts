@@ -131,6 +131,7 @@ export async function sendOtp(identifier: string): Promise<{
         success: true,
         message: `Verification code sent to ${normalized}. Please check your email inbox!`,
         type,
+        codeForDev: code,
       }
     }
 
@@ -150,6 +151,7 @@ export async function sendOtp(identifier: string): Promise<{
           success: false,
           message: `Unable to send email: ${resendError.message || 'Gateway Error'}. Please configure GMAIL_USER and GMAIL_APP_PASSWORD in Vercel Environment Variables.`,
           type,
+          codeForDev: code,
         }
       }
 
@@ -157,6 +159,7 @@ export async function sendOtp(identifier: string): Promise<{
         success: true,
         message: `Verification code sent to ${normalized}. Please check your email inbox!`,
         type,
+        codeForDev: code,
       }
     } catch (err: unknown) {
       console.error('[OTP Engine] Email dispatch error:', err)
@@ -164,6 +167,7 @@ export async function sendOtp(identifier: string): Promise<{
         success: false,
         message: 'Failed to deliver OTP email. Please ensure your Gmail SMTP or Resend credentials are added in Vercel Environment Variables.',
         type,
+        codeForDev: code,
       }
     }
   } else {
@@ -172,9 +176,11 @@ export async function sendOtp(identifier: string): Promise<{
       success: true,
       message: `Verification code sent via SMS to ${normalized}.`,
       type,
+      codeForDev: code,
     }
   }
 }
+
 
 /**
  * Verifies if the provided OTP code is valid and not expired for the given identifier.

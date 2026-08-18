@@ -202,6 +202,10 @@ export async function logout() {
   redirect('/login')
 }
 
+import crypto from 'crypto'
+
+const OTP_SECRET = 'daily-planner-otp-secret-key-2026'
+
 /**
  * Sends a 6-digit OTP code to either email or phone number for password reset.
  */
@@ -217,6 +221,30 @@ export async function requestOtpAction(rawIdentifier: string): Promise<{
   const identifier = normalizeIdentifier(rawIdentifier)
   const result = await sendOtpEngine(identifier)
 
+  if (result.success && result.codeForDev) {
+    const hash = crypto
+      .createHash('sha256')
+      .update(`${result.codeForDev.trim()}:${identifier}:${OTP_SECRET}`)
+      .digest('hex')
+
+    const cookieStore = await cookies()
+    cookieStore.set(
+      'otp_session',
+      JSON.stringify({
+        identifier,
+        hash,
+        expiresAt: Date.now() + 10 * 60 * 1000,
+        verified: false,
+      }),
+      {
+        httpOnly: true,
+        path: '/',
+        maxAge: 600,
+        sameSite: 'lax',
+      }
+    )
+  }
+
   return {
     success: result.success,
     message: result.message,
@@ -227,7 +255,10 @@ export async function requestOtpAction(rawIdentifier: string): Promise<{
 /**
  * Verifies a 6-digit OTP code sent to email or phone number.
  */
-export async function verifyOtpAction(rawIdentifier: string, code: string): Promise<{
+export async function verifyOtpAction(
+  rawIdentifier: string,
+  code: string
+): Promise<{
   success: boolean
   message: string
 }> {
@@ -236,7 +267,48 @@ export async function verifyOtpAction(rawIdentifier: string, code: string): Prom
   }
 
   const identifier = normalizeIdentifier(rawIdentifier)
-  return await verifyOtpEngine(identifier, code)
+  const cleanCode = code.trim()
+
+  // 1. Try Cookie-based OTP Session (State-independent, perfect for Vercel)
+  try {
+    const cookieStore = await cookies()
+    const sessionCookie = cookieStore.get('otp_session')
+    if (sessionCookie?.value) {
+      const parsed = JSON.parse(sessionCookie.value)
+      if (
+        parsed &&
+        parsed.identifier === identifier &&
+        Date.now() <= (parsed.expiresAt || 0)
+      ) {
+        const expectedHash = crypto
+          .createHash('sha256')
+          .update(`${cleanCode}:${identifier}:${OTP_SECRET}`)
+          .digest('hex')
+
+        if (parsed.hash === expectedHash) {
+          cookieStore.set(
+            'otp_session',
+            JSON.stringify({
+              ...parsed,
+              verified: true,
+            }),
+            {
+              httpOnly: true,
+              path: '/',
+              maxAge: 600,
+              sameSite: 'lax',
+            }
+          )
+          return { success: true, message: 'OTP verified successfully.' }
+        }
+      }
+    }
+  } catch (err) {
+    // Cookie parsing fallback
+  }
+
+  // 2. Fallback to Database / Server Store Verification
+  return await verifyOtpEngine(identifier, cleanCode)
 }
 
 /**
@@ -256,16 +328,46 @@ export async function resetPasswordWithOtpAction(
   }
 
   const identifier = normalizeIdentifier(rawIdentifier)
+  const cleanCode = code.trim()
 
-  // Double check OTP verification state
-  const verification = await verifyOtpEngine(identifier, code)
-  if (!verification.success) {
-    return verification
+  let verified = false
+
+  // 1. Check Cookie-based OTP verification state
+  try {
+    const cookieStore = await cookies()
+    const sessionCookie = cookieStore.get('otp_session')
+    if (sessionCookie?.value) {
+      const parsed = JSON.parse(sessionCookie.value)
+      if (
+        parsed &&
+        parsed.identifier === identifier &&
+        Date.now() <= (parsed.expiresAt || 0)
+      ) {
+        const expectedHash = crypto
+          .createHash('sha256')
+          .update(`${cleanCode}:${identifier}:${OTP_SECRET}`)
+          .digest('hex')
+
+        if (parsed.verified === true || parsed.hash === expectedHash) {
+          verified = true
+        }
+      }
+    }
+  } catch (err) {
+    // Ignore error
+  }
+
+  // 2. Fallback check DB verification state
+  if (!verified) {
+    const verification = await verifyOtpEngine(identifier, cleanCode)
+    if (!verification.success) {
+      return verification
+    }
+    verified = true
   }
 
   // Update password in local database store
   await updateLocalUserPasswordAsync(identifier, newPassword)
-
 
   // Try updating password in Supabase if session active
   try {
@@ -275,7 +377,13 @@ export async function resetPasswordWithOtpAction(
     // Ignore remote network error
   }
 
-  // Clear OTP from memory after successful reset
+  // Clear OTP session cookie & memory store
+  try {
+    const cookieStore = await cookies()
+    cookieStore.delete('otp_session')
+  } catch (err) {
+    // Ignore
+  }
   clearOtp(identifier)
 
   return {
@@ -283,6 +391,7 @@ export async function resetPasswordWithOtpAction(
     message: 'Password reset successfully! You can now sign in with your new password.',
   }
 }
+
 
 export async function requestPasswordReset(formData: FormData) {
   const email = formData.get('email') as string
