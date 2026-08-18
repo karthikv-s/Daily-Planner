@@ -97,7 +97,8 @@ export async function sendOtp(identifier: string): Promise<{
   // 2. Save to Supabase DB for Vercel persistence across serverless invocations
   try {
     const supabase = await createClient()
-    await supabase.from('otp_codes').upsert({
+    await supabase.from('otp_codes').delete().eq('identifier', normalized)
+    await supabase.from('otp_codes').insert({
       identifier: normalized,
       type,
       code,
@@ -107,6 +108,7 @@ export async function sendOtp(identifier: string): Promise<{
   } catch (err) {
     console.warn('[OTP Engine] Supabase DB OTP save skipped:', err)
   }
+
 
   console.log(`[OTP Engine] Generated persistent OTP for ${type}: ${normalized} -> Code: ${code}`)
 
