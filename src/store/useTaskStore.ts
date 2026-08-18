@@ -120,6 +120,43 @@ export const useTaskStore = create<TaskState>()(
     }),
     {
       name: 'daily-planner-storage',
+      skipHydration: true,
     }
   )
 );
+
+export const rehydrateTaskStore = async (userId: string | null) => {
+  if (typeof window === 'undefined') return;
+
+  const sanitizedId = userId ? userId.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '_') : 'guest';
+  const targetKey = `daily-planner-storage-${sanitizedId}`;
+
+  // If user-specific key is empty but legacy shared storage exists, migrate it for this user
+  if (!localStorage.getItem(targetKey) && localStorage.getItem('daily-planner-storage') && userId) {
+    const legacyData = localStorage.getItem('daily-planner-storage');
+    if (legacyData) {
+      localStorage.setItem(targetKey, legacyData);
+    }
+  }
+
+  // 1. Change storage key FIRST so persist middleware binds to targetKey
+  useTaskStore.persist.setOptions({
+    name: targetKey,
+  });
+
+  const savedRaw = localStorage.getItem(targetKey);
+  if (savedRaw) {
+    // 2. Rehydrate stored state from targetKey
+    await useTaskStore.persist.rehydrate();
+  } else {
+    // 3. Brand new account without saved tasks: reset to initial empty state
+    useTaskStore.setState({
+      tasks: [],
+      xp: 0,
+      streak: 0,
+      bestStreak: 0,
+      lastCompletedDate: null,
+      badges: [],
+    });
+  }
+};

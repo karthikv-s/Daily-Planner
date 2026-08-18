@@ -1,0 +1,21 @@
+[
+  {
+    "id": "2105c0f2-815e-47c9-88c1-c5809099835a",
+    "email": "karthikvs765@gmail.com",
+    "phone": "7907142692",
+    "passwordHash": "0ca8956e2e1366a209cb86dbfabaff8e7987fdca7e78b7ed2ad92724be18604d",
+    "createdAt": "2026-08-18T06:09:17.645Z"
+  },
+  {
+    "id": "f58d6bb6-d756-403c-aaa0-77fb7171a1bf",
+    "email": "kvs05655@gmail.com",
+    "passwordHash": "0ca8956e2e1366a209cb86dbfabaff8e7987fdca7e78b7ed2ad92724be18604d",
+    "createdAt": "2026-08-18T06:13:22.001Z"
+  },
+  {
+    "id": "6037adf3-9c67-4406-91b6-8372bdb975e6",
+    "email": "testuser123@example.com",
+    "passwordHash": "ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f",
+    "createdAt": "2026-08-18T10:01:36.858Z"
+  }
+]

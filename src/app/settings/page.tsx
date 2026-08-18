@@ -3,9 +3,10 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useTaskStore } from "@/store/useTaskStore";
-import { User, Database, Cloud } from "lucide-react";
+import { User, Database, Cloud, LogOut } from "lucide-react";
 import { toast } from "sonner";
 import { useState } from "react";
+import { logout } from "@/app/auth/actions";
 
 export default function SettingsPage() {
   const { tasks, isCloudSyncEnabled, setCloudSync } = useTaskStore();
@@ -13,7 +14,12 @@ export default function SettingsPage() {
 
   const handleClearData = () => {
     if (confirm("Are you sure you want to clear your local tasks? This cannot be undone.")) {
-      localStorage.removeItem('daily-planner-storage');
+      useTaskStore.setState({ tasks: [], xp: 0, streak: 0, bestStreak: 0, lastCompletedDate: null, badges: [] });
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('daily-planner-storage')) {
+          localStorage.removeItem(key);
+        }
+      });
       window.location.href = '/';
     }
   }
@@ -60,6 +66,23 @@ export default function SettingsPage() {
               disabled={isConnecting}
             >
               {isConnecting ? "Connecting..." : isCloudSyncEnabled ? "Disconnect Account" : "Connect Account"}
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center gap-4 space-y-0">
+            <div className="bg-red-100 dark:bg-red-900/30 p-2 rounded-xl">
+              <LogOut className="w-6 h-6 text-red-600 dark:text-red-400" />
+            </div>
+            <div>
+              <CardTitle>Sign Out</CardTitle>
+              <CardDescription>Securely sign out of your account on this device.</CardDescription>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <Button variant="destructive" onClick={() => logout()}>
+              Sign Out
             </Button>
           </CardContent>
         </Card>
